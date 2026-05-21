@@ -1,0 +1,23 @@
+# Ignore a single file
+secret.txt
+
+# Ignore all log files
+*.log
+
+# Ignore a folder
+node_modules/
+
+# Ignore OS files
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# Node.js
+node_modules/
+dist/
+
+# VS Code
+.vscode/
