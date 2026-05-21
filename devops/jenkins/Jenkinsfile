@@ -1,0 +1,101 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKER_IMAGE_BACKEND  = 'sms-backend'
+        DOCKER_IMAGE_FRONTEND = 'sms-frontend'
+        EC2_HOST              = "${env.EC2_HOST ?: 'your-ec2-ip-here'}"
+        EC2_USER              = 'ubuntu'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                echo '📥 Checking out source code from GitHub...'
+                checkout scm
+            }
+        }
+
+        stage('Build Backend') {
+            steps {
+                echo '🔨 Building Spring Boot backend...'
+                dir('backend_modified') {
+                    sh 'mvn clean package -DskipTests'
+                }
+            }
+        }
+
+        stage('Test Backend') {
+            steps {
+                echo '🧪 Running backend tests...'
+                dir('backend_modified') {
+                    sh 'mvn test'
+                }
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true, testResults: 'backend_modified/target/surefire-reports/*.xml'
+                }
+            }
+        }
+
+        stage('Build Frontend') {
+            steps {
+                echo '🎨 Building React frontend...'
+                dir('frontend') {
+                    sh 'npm ci'
+                    sh 'npm run build'
+                }
+            }
+        }
+
+        stage('Build Docker Images') {
+            steps {
+                echo '🐳 Building Docker images...'
+                sh "docker build -t ${DOCKER_IMAGE_BACKEND}:${BUILD_NUMBER} ./backend_modified"
+                sh "docker build -t ${DOCKER_IMAGE_FRONTEND}:${BUILD_NUMBER} ./frontend"
+                sh "docker tag ${DOCKER_IMAGE_BACKEND}:${BUILD_NUMBER} ${DOCKER_IMAGE_BACKEND}:latest"
+                sh "docker tag ${DOCKER_IMAGE_FRONTEND}:${BUILD_NUMBER} ${DOCKER_IMAGE_FRONTEND}:latest"
+            }
+        }
+
+        stage('Deploy to AWS EC2') {
+            when {
+                branch 'main'
+            }
+            steps {
+                echo '🚀 Deploying to AWS EC2...'
+                sshagent(['ec2-ssh-key']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
+                            cd /opt/sms
+                            docker compose down --remove-orphans
+                            docker compose up -d
+                        '
+                    """
+                }
+            }
+        }
+
+        stage('Health Check') {
+            when {
+                branch 'main'
+            }
+            steps {
+                echo '❤️ Checking application health...'
+                sh 'sleep 30'
+                sh "curl -f http://${EC2_HOST}:8082/actuator/health || exit 1"
+            }
+        }
+    }
+
+    post {
+        success {
+            echo '✅ Pipeline completed successfully!'
+        }
+        failure {
+            echo '❌ Pipeline failed. Check logs above.'
+        }
+    }
+}
